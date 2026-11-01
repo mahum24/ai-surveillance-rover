@@ -1,0 +1,83 @@
+{
+  "arch": {
+    "n_feat": 174,
+    "hidden": 64,
+    "layers": 2,
+    "dropout": 0.3
+  },
+  "window": 20,
+  "fps": 10.0,
+  "threshold": 0.73,
+  "consecutive": 2,
+  "pair_gap": 1.0,
+  "proximity": 3.5,
+  "trained_on": "RWF-2000 train split (pose from YOLO11n-pose + ByteTrack)",
+  "clips": {
+    "train": 1600,
+    "fit": 1440,
+    "dev": 160,
+    "test": 400,
+    "folds": 5
+  },
+  "windows": 6869,
+  "cv_with_pair": {
+    "accuracy": 0.6863,
+    "precision": 0.7244,
+    "recall": 0.7286,
+    "f1": 0.7265,
+    "tp": 255,
+    "tn": 165,
+    "fp": 97,
+    "fn": 95,
+    "roc_auc": 0.7017
+  },
+  "test_learned": {
+    "accuracy": 0.6775,
+    "precision": 0.8142,
+    "recall": 0.46,
+    "f1": 0.5879,
+    "tp": 92,
+    "tn": 179,
+    "fp": 21,
+    "fn": 108,
+    "roc_auc": 0.6668
+  },
+  "test_rules": {
+    "accuracy": 0.6375,
+    "precision": 0.8161,
+    "recall": 0.355,
+    "f1": 0.4948,
+    "tp": 71,
+    "tn": 184,
+    "fp": 16,
+    "fn": 129
+  },
+  "coverage": {
+    "test_clips": 400,
+    "with_close_pair": 193,
+    "fight_with_pair": 121,
+    "nonfight_with_pair": 72
+  },
+  "test_learned_with_pair": {
+    "accuracy": 0.7409,
+    "precision": 0.8142,
+    "recall": 0.7603,
+    "f1": 0.7863,
+    "tp": 92,
+    "tn": 51,
+    "fp": 21,
+    "fn": 29,
+    "roc_auc": 0.7707
+  },
+  "test_rules_with_pair": {
+    "accuracy": 0.6218,
+    "precision": 0.8,
+    "recall": 0.5289,
+    "f1": 0.6368,
+    "tp": 64,
+    "tn": 56,
+    "fp": 16,
+    "fn": 57
+  },
+  "created": "2026-11-01 16:12"
+}

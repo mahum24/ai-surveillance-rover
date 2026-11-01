@@ -70,7 +70,7 @@ def draw_item(img, item, status):
     _text(img, label, (x1, y2 + 16), (0, 0, 0), bg=color)
 
 
-def draw_hud(img, banner, fps, editor=None, paused=False):
+def draw_hud(img, banner, fps, editor=None, paused=False, info=None, rover=False):
     h, w = img.shape[:2]
     for i, msg in enumerate(banner):
         y = 30 + i * 30
@@ -78,10 +78,15 @@ def draw_hud(img, banner, fps, editor=None, paused=False):
         cv2.putText(img, msg, (10, y), FONT, 0.7, WHITE, 2, cv2.LINE_AA)
     if editor is not None and editor.active:
         help_txt = f"Drawing {editor.kind.upper()} zone: click points, ENTER = save, ESC = cancel"
+    elif rover:
+        help_txt = "[G] patrol [H] guard [M] manual [WASD] drive [Space] stop [Z] zone [V] debug [Q] quit"
     else:
-        help_txt = "[Z] restricted zone  [L] loiter zone  [C] clear zones  [D] debug  [P] pause  [Q] quit"
+        help_txt = "[Z] restricted zone  [L] loiter zone  [C] clear zones  [V] debug  [P] pause  [Q] quit"
     status = f"FPS {fps:4.1f}" if fps is not None else ""
     if paused:
         status += "  PAUSED"
-    cv2.rectangle(img, (0, h - 26), (w, h), (0, 0, 0), -1)
+    bar = 26 + (22 if info else 0)
+    cv2.rectangle(img, (0, h - bar), (w, h), (0, 0, 0), -1)
+    if info:
+        cv2.putText(img, info, (8, h - 30), FONT, 0.5, YELLOW, 1, cv2.LINE_AA)
     cv2.putText(img, f"{status}   {help_txt}", (8, h - 8), FONT, 0.5, WHITE, 1, cv2.LINE_AA)

@@ -7,3 +7,7 @@ opencv-python<4.11
 lap>=0.5.12
 pyyaml
 requests
+# backend + dashboard
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+pyjwt==2.15.1

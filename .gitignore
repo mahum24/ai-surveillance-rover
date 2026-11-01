@@ -7,6 +7,10 @@ __pycache__/
 # downloaded / generated (not redistributed)
 data/
 models/*.pt
+# our trained model is small and is shipped
+!models/fight_gru.pt
+mlruns/
+.dvc/cache/
 tests/videos/*
 !tests/videos/.gitkeep
 alerts/
@@ -16,3 +20,12 @@ zones.json
 
 # personal documents
 *.pdf
+*.docx
+instructions.txt
+backend/surveillance.db
+backend/.jwt_secret
+docs/report_src/media/
+documents/
+
+# report sources (report text, university template, figures): not part of the code
+docs/report_src/

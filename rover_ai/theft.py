@@ -34,6 +34,10 @@ class TheftDetector:
         self.hand_memory = cfg["hand_memory_seconds"]
         self.objects = {}
 
+    def reset(self):
+        """Forget all objects (called while the camera is moving)."""
+        self.objects.clear()
+
     def update(self, items, tracks, t, fresh, flags):
         events = []
         if fresh:

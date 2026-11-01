@@ -1,8 +1,9 @@
-"""Suspicious-activity detector: webcam, video file, image or folder of images.
+"""Suspicious-activity detector: webcam, video file, images, or the rover's live camera.
 
-    python run.py                      # webcam
-    python run.py --source clip.mp4    # video file
-    python run.py --source photo.jpg   # single image (or a folder of images)
+    python run.py                                   # laptop webcam
+    python run.py --source clip.mp4                 # video file
+    python run.py --source photo.jpg                # single image (or a folder of images)
+    python run.py --rover http://<pi-ip>:8000       # the rover: its camera + driving + patrol
 """
 import argparse
 import sys
@@ -11,6 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import cv2
+import numpy as np
 import yaml
 
 from rover_ai.alerts import AlertManager
@@ -25,16 +27,21 @@ from rover_ai.zones import ZoneEditor, Zones
 ROOT = Path(__file__).resolve().parent
 WINDOW = "Surveillance"
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+DRIVE_KEYS = {ord("w"): "forward", ord("s"): "back", ord("a"): "left", ord("d"): "right", ord(" "): "stop"}
+MODE_KEYS = {ord("g"): "patrol", ord("h"): "guard", ord("m"): "manual"}
 
 
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", help="webcam index, video, image or image folder (default: config camera.source)")
+    ap.add_argument("--source", help="webcam index, video, image, image folder or stream URL (default: config)")
+    ap.add_argument("--rover", help="rover agent URL, e.g. http://192.168.137.50:8000 (default: config rover.url)")
+    ap.add_argument("--mode", choices=["manual", "guard", "patrol"], help="rover start mode (default: config)")
     ap.add_argument("--config", default=str(ROOT / "config.yaml"))
     ap.add_argument("--save", help="write the annotated video to this .mp4 path")
+    ap.add_argument("--record", help="write the RAW camera video (no drawings) to this .mp4 path, at a steady 10 fps - for building training data")
     ap.add_argument("--headless", action="store_true", help="no window (for testing / servers)")
     ap.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = no limit)")
-    ap.add_argument("--debug", action="store_true", help="show per-person motion values (toggle with D)")
+    ap.add_argument("--debug", action="store_true", help="show per-person motion values (toggle with V)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override a config value, e.g. --set loitering.seconds=8 (repeatable)")
     return ap.parse_args()
@@ -62,29 +69,82 @@ def label_for(tr_id, flags, dwell=None, energy=None, debug=False):
     return " | ".join(parts)
 
 
-def open_capture(source, cam_cfg):
-    if str(source).isdigit():
-        backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
-        cap = cv2.VideoCapture(int(source), backend)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg["width"])
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_cfg["height"])
-        live = True
-    else:
-        cap = cv2.VideoCapture(str(source))
-        live = False
-    if not cap.isOpened():
-        msg = f"Could not open source: {source}"
-        if live and sys.platform == "darwin":
-            msg += ("\nOn macOS, allow camera access for your terminal app in "
-                    "System Settings > Privacy & Security > Camera, then restart the terminal.")
-        sys.exit(msg)
-    return cap, live
+class FrameSource:
+    """Webcam, video file, or network stream (rover). read() -> (frame or None, ended)."""
+
+    def __init__(self, source, cam_cfg):
+        source = str(source)
+        self.network = source.startswith(("http://", "https://", "rtsp://"))
+        self.webcam = source.isdigit()
+        self.live = self.network or self.webcam
+        self.mirror = self.webcam and cam_cfg["mirror"]
+        self.fps = 25.0
+        if self.network:
+            from rover_ai.services import LatestFrameReader
+            self.reader = LatestFrameReader(source)
+            self.seq = 0
+            return
+        if self.webcam:
+            backend = cv2.CAP_AVFOUNDATION if sys.platform == "darwin" else cv2.CAP_ANY
+            self.cap = cv2.VideoCapture(int(source), backend)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg["width"])
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_cfg["height"])
+        else:
+            self.cap = cv2.VideoCapture(source)
+            self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 25.0
+        if not self.cap.isOpened():
+            msg = f"Could not open source: {source}"
+            if self.webcam and sys.platform == "darwin":
+                msg += ("\nOn macOS, allow camera access for your terminal app in "
+                        "System Settings > Privacy & Security > Camera, then restart the terminal.")
+            sys.exit(msg)
+
+    def read(self):
+        if self.network:
+            frame, self.seq = self.reader.read(self.seq, timeout=1.0)
+            return frame, False
+        ok, frame = self.cap.read()
+        if not ok:
+            return None, True
+        return (cv2.flip(frame, 1) if self.mirror else frame), False
+
+    def release(self):
+        if self.network:
+            self.reader.alive = False
+        else:
+            self.cap.release()
 
 
-def run_stream(source, cfg, args):
-    cap, live = open_capture(source, cfg["camera"])
-    file_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    mirror = live and cfg["camera"]["mirror"]
+def waiting_frame(text):
+    img = np.zeros((480, 640, 3), np.uint8)
+    cv2.putText(img, text, (20, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+    return img
+
+
+def rover_info(controller):
+    st = controller.status or {}
+    dist = st.get("distance_cm")
+    gps = f"{st['lat']:.5f},{st['lon']:.5f}" if st.get("gps_fix") else "no fix"
+    flag = "  OBSTACLE" if st.get("obstacle") else ""
+    return (f"ROVER {controller.mode.upper()} | {controller.state} | "
+            f"sonar {dist if dist else '--'} cm{flag} | GPS {gps}")
+
+
+def make_fight_detector(fcfg):
+    """Trained GRU if available (fight.method: model), otherwise the hand-tuned rules."""
+    if fcfg.get("method", "rules") == "model":
+        path = ROOT / fcfg.get("model", "models/fight_gru.pt")
+        if path.exists():
+            from rover_ai.learned import LearnedFightDetector
+            det = LearnedFightDetector(fcfg, ROOT)
+            print(f"Fight detection: trained model {path.name} (threshold {det.thr:.2f})")
+            return det
+        print(f"Fight detection: {path.name} not found, using hand-tuned rules (train it: see docs/TRAINING.md)")
+    return FightDetector(fcfg)
+
+
+def run_stream(source, cfg, args, controller=None):
+    src = FrameSource(source, cfg["camera"])
     anchor = cfg["zones"]["anchor"]
 
     detector = Detector(cfg, ROOT)
@@ -94,37 +154,55 @@ def run_stream(source, cfg, args):
     people = PeopleState()
     loiter = LoiterRule(cfg["loitering"], anchor) if cfg["loitering"]["enabled"] else None
     access = AccessRule(anchor) if cfg["access"]["enabled"] else None
-    fight = FightDetector(cfg["fight"]) if cfg["fight"]["enabled"] else None
+    fight = make_fight_detector(cfg["fight"]) if cfg["fight"]["enabled"] else None
     theft = TheftDetector(cfg["theft"]) if cfg["theft"]["enabled"] else None
+
+    backend = live_view = None
+    if cfg["backend"]["url"]:
+        from rover_ai.services import BackendLink, LiveView
+        backend = BackendLink(cfg["backend"]["url"], cfg["backend"]["device_token"])
+        alerts.listeners.append(backend.post_alert)
+        live_view = LiveView(cfg["backend"]["live_view_port"])
+        print(f"Live view on port {cfg['backend']['live_view_port']}, sending alerts to {cfg['backend']['url']}")
 
     if not args.headless:
         cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(WINDOW, editor.on_mouse)
 
     writer = None
+    recorder, rec_t0, rec_n = None, None, 0
     debug, paused = args.debug, False
     frame_idx, fps, last_tick = 0, None, time.time()
-    view = None
+    frame = view = None
+    n_people = 0
     while True:
         if not paused:
-            ok, frame = cap.read()
-            if not ok:
+            frame, ended = src.read()
+            if ended:
                 break
-            if mirror:
-                frame = cv2.flip(frame, 1)
+        if frame is None:
+            view = waiting_frame("Waiting for rover video... check the Pi agent and Wi-Fi")
+        elif not paused:
             # video files use their own clock so timings are right even if we process slower than real time
-            t = time.time() if live else frame_idx / file_fps
+            t = time.time() if src.live else frame_idx / src.fps
             editor.shape = frame.shape
             alerts.push_frame(frame, t)
 
             persons, items, fresh = detector(frame)
             people.update(persons, t)
             tracks = people.visible(t)
+            n_people = len(tracks)
+            # zones are drawn on the picture, so they only mean something while the camera is parked
+            zones_active = controller is None or controller.mode == "guard"
+            if controller:
+                controller.observe(n_people)
+                if theft and controller.camera_moving():
+                    theft.reset()      # everything shifts in the picture when the rover moves
             flags = defaultdict(set)
             events, energy = [], {}
             if loiter:
                 events += loiter.update(tracks, zones, t, frame.shape, flags)
-            if access:
+            if access and zones_active:
                 events += access.update(tracks, zones, t, frame.shape, flags)
             if fight:
                 ev, energy = fight.update(tracks, t, flags)
@@ -133,7 +211,8 @@ def run_stream(source, cfg, args):
                 events += theft.update(items, tracks, t, fresh, flags)
 
             view = frame.copy()
-            draw_zones(view, zones, editor)
+            if zones_active:
+                draw_zones(view, zones, editor)
             for it in items:
                 draw_item(view, it, theft.status(it) if theft else "")
             for p in persons:
@@ -143,23 +222,48 @@ def run_stream(source, cfg, args):
                             label_for(p.track_id, f, tr.dwell if tr else None, energy.get(p.track_id), debug),
                             person_color(f))
             for e in events:
-                alerts.handle(e, view, t)
+                if alerts.handle(e, view, t) and controller:
+                    controller.on_alert()
 
             now = time.time()
             inst = 1.0 / max(now - last_tick, 1e-6)
             fps = inst if fps is None else 0.9 * fps + 0.1 * inst
             last_tick = now
             frame_idx += 1
-        else:
+        elif view is None or paused:
             view = frame.copy()
             draw_zones(view, zones, editor)
 
         shown = view.copy()
-        draw_hud(shown, alerts.banner(), fps, editor, paused)
+        info = rover_info(controller) if controller else None
+        draw_hud(shown, alerts.banner(), fps, editor, paused, info=info, rover=controller is not None)
+        if live_view:
+            live_view.publish(shown)
+        if backend:
+            backend.status = {"fps": round(fps or 0, 1), "people": n_people,
+                              "live_view_port": cfg["backend"]["live_view_port"],
+                              "rover": None if controller is None else {
+                                  "mode": controller.mode, "state": controller.state,
+                                  "online": controller.client.online, **(controller.status or {})}}
+            while not backend.commands.empty():
+                cmd = backend.commands.get()
+                if controller and cmd.get("mode"):
+                    controller.set_mode(cmd["mode"])
+                if controller and cmd.get("drive"):
+                    controller.manual_drive(cmd["drive"])
+        if args.record and frame is not None and not paused:
+            # constant 10 fps in real time (frames repeated/dropped as needed), so motion speed stays true
+            if recorder is None:
+                h, w = frame.shape[:2]
+                recorder = cv2.VideoWriter(args.record, cv2.VideoWriter_fourcc(*"mp4v"), 10, (w, h))
+                rec_t0 = time.time()
+            while rec_n < int((time.time() - rec_t0) * 10) + 1:
+                recorder.write(frame)
+                rec_n += 1
         if args.save:
             if writer is None:
                 h, w = shown.shape[:2]
-                writer = cv2.VideoWriter(args.save, cv2.VideoWriter_fourcc(*"mp4v"), file_fps if not live else 10, (w, h))
+                writer = cv2.VideoWriter(args.save, cv2.VideoWriter_fourcc(*"mp4v"), src.fps if not src.live else 10, (w, h))
             writer.write(shown)
         if args.max_frames and frame_idx >= args.max_frames:
             break
@@ -176,20 +280,28 @@ def run_stream(source, cfg, args):
             continue
         if key in (ord("q"), 27):
             break
+        elif controller and key in MODE_KEYS:
+            controller.set_mode(MODE_KEYS[key])
+        elif controller and key in DRIVE_KEYS:
+            controller.manual_drive(DRIVE_KEYS[key])
         elif key == ord("z"):
             editor.start("restricted")
         elif key == ord("l"):
             editor.start("loiter")
         elif key == ord("c"):
             zones.clear()
-        elif key == ord("d"):
+        elif key == ord("v"):
             debug = not debug
         elif key == ord("p"):
             paused = not paused
 
-    cap.release()
+    if controller:
+        controller.client.stop()
+    src.release()
     if writer:
         writer.release()
+    if recorder:
+        recorder.release()
     cv2.destroyAllWindows()
 
 
@@ -239,15 +351,33 @@ def main():
     args = parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     apply_overrides(cfg, args.set)
-    source = args.source if args.source is not None else str(cfg["camera"]["source"])
+
+    controller = None
+    rover_url = args.rover or cfg["rover"]["url"]
+    if rover_url:
+        from rover_ai.patrol import PatrolController
+        from rover_ai.rover_client import RoverClient
+        if args.mode:
+            cfg["rover"]["start_mode"] = args.mode
+        client = RoverClient(rover_url, cfg["rover"]["token"])
+        controller = PatrolController(client, cfg["rover"])
+        print(f"Rover at {rover_url}, mode: {controller.mode}")
+
+    if args.source is not None:
+        source = args.source
+    elif controller:
+        source = controller.client.stream_url
+    else:
+        source = str(cfg["camera"]["source"])
+
     p = Path(source)
-    if p.is_dir():
+    if controller is None and p.is_dir():
         images = sorted(f for f in p.iterdir() if f.suffix.lower() in IMAGE_EXT)
         run_images(images, cfg, args)
-    elif p.suffix.lower() in IMAGE_EXT:
+    elif controller is None and p.suffix.lower() in IMAGE_EXT:
         run_images([p], cfg, args)
     else:
-        run_stream(source, cfg, args)
+        run_stream(source, cfg, args, controller)
 
 
 if __name__ == "__main__":

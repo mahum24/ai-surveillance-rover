@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rover Control</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #16181d; --muted: #646b78; --line: #e2e5ea;
+    --accent: #2457d6; --danger: #d33b2f; --warn: #d98a00; --ok: #1f9d55; --chip: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #181b21; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2f38;
+      --accent: #6f9bff; --danger: #ff6b5e; --warn: #ffb547; --ok: #4cc287; --chip: #232832;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; flex: 1; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--danger); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--text); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.active { outline: 2px solid var(--accent); font-weight: 600; }
+  main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; padding: 12px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .panel h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  .live { position: relative; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .live img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .live .msg { position: absolute; inset: 0; display: grid; place-items: center; color: #bbb; text-align: center; padding: 20px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 12px; }
+  .stat { background: var(--chip); border-radius: 8px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 16px; overflow-wrap: anywhere; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 56px); gap: 6px; justify-content: center; margin-top: 12px; }
+  .pad button { height: 48px; font-size: 18px; }
+  .alerts { display: flex; flex-direction: column; gap: 8px; max-height: 70vh; overflow-y: auto; }
+  .alert { display: flex; gap: 10px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; background: var(--panel); }
+  .alert:hover { border-color: var(--accent); }
+  .alert.new { animation: flash 1.5s ease 2; }
+  @keyframes flash { 50% { background: color-mix(in srgb, var(--danger) 18%, var(--panel)); } }
+  .alert img { width: 88px; height: 66px; object-fit: cover; border-radius: 6px; background: #000; flex: none; }
+  .alert .t { font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 99px; color: #fff; }
+  .b-fight { background: var(--danger); } .b-theft { background: #8a3ffc; } .b-loitering { background: var(--warn); } .b-restricted { background: #c2185b; }
+  .label { font-size: 11px; color: var(--muted); }
+  .filters { margin-bottom: 10px; }
+  .filters button { padding: 4px 10px; font-size: 13px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+  .modal.open { display: flex; }
+  .modal .box { background: var(--panel); border-radius: 12px; padding: 14px; width: min(760px, 100%); max-height: 92vh; overflow-y: auto; }
+  .modal video, .modal img { width: 100%; border-radius: 8px; background: #000; }
+  .login { max-width: 360px; margin: 12vh auto; }
+  .login input { width: 100%; padding: 10px; margin: 6px 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  .err { color: var(--danger); min-height: 20px; }
+  .toast { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); background: var(--danger); color: #fff; padding: 12px 18px; border-radius: 10px; font-weight: 600; display: none; z-index: 30; max-width: calc(100% - 32px); }
+  .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<section id="loginView" class="panel login" hidden>
+  <h2>Rover Control – Sign in</h2>
+  <label>Username <input id="user" autocomplete="username"></label>
+  <label>Password <input id="pass" type="password" autocomplete="current-password"></label>
+  <div class="err" id="loginErr"></div>
+  <button class="primary" id="loginBtn" style="width:100%">Sign in</button>
+</section>
+
+<div id="appView" hidden>
+  <header>
+    <span class="dot" id="onlineDot" title="Detector connection"></span>
+    <h1>AI Surveillance Rover</h1>
+    <span class="label" id="whoami"></span>
+    <button id="logoutBtn">Log out</button>
+  </header>
+  <main>
+    <div>
+      <section class="panel">
+        <h2>Live view</h2>
+        <div class="live"><img id="liveImg" alt="Live detection view"><div class="msg" id="liveMsg">Waiting for the detector…</div></div>
+        <div class="stats">
+          <div class="stat"><span>Mode</span><b id="sMode">–</b></div>
+          <div class="stat"><span>Doing</span><b id="sState">–</b></div>
+          <div class="stat"><span>People in view</span><b id="sPeople">–</b></div>
+          <div class="stat"><span>Sonar</span><b id="sSonar">–</b></div>
+          <div class="stat"><span>GPS</span><b id="sGps">–</b></div>
+          <div class="stat"><span>Detector FPS</span><b id="sFps">–</b></div>
+        </div>
+      </section>
+      <section class="panel" style="margin-top:16px">
+        <h2>Rover</h2>
+        <div class="row" id="modeBtns">
+          <button data-mode="patrol">Patrol</button>
+          <button data-mode="guard">Guard (parked)</button>
+          <button data-mode="manual">Manual</button>
+        </div>
+        <div class="pad">
+          <span></span><button data-drive="forward" aria-label="Forward">▲</button><span></span>
+          <button data-drive="left" aria-label="Turn left">◀</button><button data-drive="stop" aria-label="Stop">■</button><button data-drive="right" aria-label="Turn right">▶</button>
+          <span></span><button data-drive="back" aria-label="Back">▼</button><span></span>
+        </div>
+      </section>
+    </div>
+    <section class="panel">
+      <h2>Alerts</h2>
+      <div class="row filters" id="filters">
+        <button data-type="" class="active">All</button>
+        <button data-type="fight">Fight</button>
+        <button data-type="theft">Stealing</button>
+        <button data-type="loitering">Loitering</button>
+        <button data-type="restricted">Restricted</button>
+      </div>
+      <div class="alerts" id="alertList"><div class="empty">No alerts yet.</div></div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <div><span class="badge" id="mBadge"></span> <b id="mMsg"></b><div class="t label" id="mTime"></div></div>
+      <button id="mClose">Close</button>
+    </div>
+    <div id="mMedia"></div>
+    <div class="row" style="margin-top:10px">
+      <span class="label">Was this correct?</span>
+      <button data-label="real">Yes, real</button>
+      <button data-label="false_alarm">No, false alarm</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const TYPE_NAMES = { fight: "Fight", theft: "Stealing", loitering: "Loitering", restricted: "Restricted" };
+let token = localStorage.getItem("token") || "";
+let filter = "", alerts = [], lastId = 0, liveSrc = "", openAlert = null, firstLoad = true;
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", Authorization: "Bearer " + token, ...(opts.headers || {}) } });
+  if (res.status === 401) { logout(); throw new Error("unauthorised"); }
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+}
+const media = (p) => "/media/" + encodeURI(p) + "?token=" + encodeURIComponent(token);
+
+function show(view) { $("loginView").hidden = view !== "login"; $("appView").hidden = view !== "app"; }
+function logout() { token = ""; localStorage.removeItem("token"); show("login"); }
+
+$("loginBtn").onclick = async () => {
+  $("loginErr").textContent = "";
+  try {
+    const res = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("user").value, password: $("pass").value }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+    token = data.token; localStorage.setItem("token", token); start();
+  } catch (e) { $("loginErr").textContent = e.message; }
+};
+$("pass").addEventListener("keydown", (e) => { if (e.key === "Enter") $("loginBtn").click(); });
+$("logoutBtn").onclick = logout;
+
+function beep() {
+  try {
+    const ctx = new AudioContext(), o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(ctx.destination); g.gain.value = 0.15;
+    o.start(); o.stop(ctx.currentTime + 0.35);
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+}
+function toast(text, info = false) { const t = $("toast"); t.textContent = text; t.style.background = info ? "var(--accent)" : "var(--danger)"; t.style.display = "block"; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 5000); }
+
+function renderAlerts(newIds = new Set()) {
+  const list = $("alertList");
+  const shown = alerts.filter((a) => !filter || a.type === filter);
+  if (!shown.length) { list.innerHTML = '<div class="empty">No alerts yet.</div>'; return; }
+  list.innerHTML = "";
+  for (const a of shown) {
+    const el = document.createElement("div");
+    el.className = "alert" + (newIds.has(a.id) ? " new" : "");
+    const label = a.label === "real" ? "✓ confirmed" : a.label === "false_alarm" ? "✗ false alarm" : "not reviewed";
+    el.innerHTML = `<img loading="lazy" alt=""><div><span class="badge b-${a.type}"></span>
+      <div class="m"></div><div class="t"></div><div class="label"></div></div>`;
+    if (a.snapshot) el.querySelector("img").src = media(a.snapshot);
+    el.querySelector(".badge").textContent = TYPE_NAMES[a.type] || a.type;
+    el.querySelector(".m").textContent = a.message;
+    el.querySelector(".t").textContent = new Date(a.time).toLocaleString();
+    el.querySelector(".label").textContent = label;
+    el.onclick = () => openModal(a);
+    list.appendChild(el);
+  }
+}
+
+async function loadAlerts() {
+  const fresh = await api(`/api/alerts?limit=100&after_id=${lastId}`);
+  if (!fresh.length) return;
+  lastId = Math.max(lastId, ...fresh.map((a) => a.id));
+  alerts = [...fresh, ...alerts].slice(0, 300);
+  const ids = new Set(firstLoad ? [] : fresh.map((a) => a.id));
+  if (!firstLoad) { beep(); toast(fresh[0].message); }
+  firstLoad = false;
+  renderAlerts(ids);
+}
+
+$("filters").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  filter = b.dataset.type;
+  for (const x of $("filters").children) x.classList.toggle("active", x === b);
+  renderAlerts();
+};
+
+function openModal(a) {
+  openAlert = a;
+  $("mBadge").className = "badge b-" + a.type; $("mBadge").textContent = TYPE_NAMES[a.type] || a.type;
+  $("mMsg").textContent = a.message; $("mTime").textContent = new Date(a.time).toLocaleString();
+  const m = $("mMedia"); m.innerHTML = "";
+  if (a.clip) {
+    const v = document.createElement("video");
+    v.controls = true; v.autoplay = true; v.muted = true; v.playsInline = true; v.src = media(a.clip);
+    if (a.snapshot) v.poster = media(a.snapshot);
+    v.onerror = () => { m.innerHTML = ""; const i = document.createElement("img"); i.src = media(a.snapshot); m.appendChild(i); };
+    m.appendChild(v);
+  } else if (a.snapshot) {
+    const i = document.createElement("img"); i.src = media(a.snapshot); m.appendChild(i);
+  }
+  $("modal").classList.add("open");
+}
+$("mClose").onclick = () => { $("modal").classList.remove("open"); $("mMedia").innerHTML = ""; };
+$("modal").onclick = (e) => { if (e.target === $("modal")) $("mClose").click(); };
+for (const b of document.querySelectorAll("[data-label]")) {
+  b.onclick = async () => {
+    await api(`/api/alerts/${openAlert.id}`, { method: "PATCH", body: JSON.stringify({ label: b.dataset.label }) });
+    openAlert.label = b.dataset.label; renderAlerts(); $("mClose").click();
+  };
+}
+
+async function loadStatus() {
+  let s;
+  try { s = await api("/api/status"); } catch (e) { return; }
+  $("onlineDot").className = "dot " + (s.detector_online ? "on" : "off");
+  const r = s.rover || {};
+  $("sMode").textContent = s.rover ? (r.mode || "–") : (s.detector_online ? "camera only" : "offline");
+  $("sState").textContent = s.rover ? (r.online === false ? "rover offline" : r.state || "–") : "–";
+  $("sPeople").textContent = s.detector_online ? s.people : "–";
+  $("sSonar").textContent = r.distance_cm ? `${r.distance_cm} cm${r.obstacle ? " (blocked)" : ""}` : "–";
+  $("sGps").textContent = r.gps_fix ? `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}` : (s.rover ? "no fix" : "–");
+  $("sFps").textContent = s.detector_online ? s.fps : "–";
+  for (const b of $("modeBtns").children) b.classList.toggle("active", b.dataset.mode === r.mode);
+  const want = s.detector_online ? `http://${location.hostname}:${s.live_view_port}/stream.mjpg` : "";
+  if (want !== liveSrc) {
+    liveSrc = want; $("liveImg").src = want;
+    $("liveMsg").style.display = want ? "none" : "grid";
+    $("liveMsg").textContent = "Detector offline. Start run.py on the laptop.";
+  }
+}
+
+$("modeBtns").onclick = async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  try { await api("/api/command", { method: "POST", body: JSON.stringify({ mode: b.dataset.mode }) }); toast("Sent: " + b.textContent, true); }
+  catch (err) { toast(err.message); }
+};
+for (const b of document.querySelectorAll("[data-drive]")) {
+  b.onclick = () => api("/api/command", { method: "POST", body: JSON.stringify({ drive: b.dataset.drive }) }).catch((e) => toast(e.message));
+}
+
+let started = false;
+async function start() {
+  if (started) { show("app"); return; }
+  try { $("whoami").textContent = (await api("/api/me")).username; } catch (e) { return; }
+  show("app"); started = true;
+  await loadAlerts(); await loadStatus();
+  setInterval(() => loadAlerts().catch(() => {}), 2000);
+  setInterval(loadStatus, 1500);
+}
+if (token) start(); else show("login");
+</script>
+</body>
+</html>

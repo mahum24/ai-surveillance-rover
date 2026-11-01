@@ -1,0 +1,19 @@
+# Training settings (used by training/train_fight.py and tracked by DVC / MLflow)
+fight_model:
+  data: data/rwf/pose        # output of training/extract_pose.py
+  extra_data: []             # more pose folders, e.g. [data/own/pose] for your labelled rover clips
+  window: 20                 # frames per sample at 10 fps = 2 seconds
+  stride: 2                  # training windows start every 0.2 s
+  proximity: 3.5             # only pairs closer than this many body-widths are judged (same as live)
+  consecutive_choices: [2, 3, 4, 5]   # alert rule: this many judgements in a row above the threshold (chosen by CV)
+  folds: 5                   # cross-validation folds on the train split (choose threshold + judgements in a row)
+  hidden: 64
+  layers: 2
+  dropout: 0.3
+  lr: 0.001
+  weight_decay: 0.0001
+  batch: 128
+  epochs: 40
+  patience: 8                # stop when the dev score hasn't improved for this many epochs
+  noise: 0.05                # Gaussian noise added to features (augmentation)
+  seed: 0

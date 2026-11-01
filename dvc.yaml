@@ -1,0 +1,30 @@
+# MLOps pipeline. Run everything (only changed stages re-run):   dvc repro
+# Without DVC the same two commands can be run by hand, in this order.
+stages:
+  extract_pose:
+    cmd: python training/extract_pose.py --archive data/rwf/RWF-2000.tar.gz --out data/rwf/pose --workers 3
+    deps:
+      - data/rwf/RWF-2000.tar.gz
+      - training/extract_pose.py
+      - models/yolo11n-pose.pt
+    outs:
+      - data/rwf/pose
+  train_fight:
+    cmd: python training/train_fight.py
+    deps:
+      - data/rwf/pose
+      - training/train_fight.py
+      - rover_ai/learned.py
+    params:
+      - fight_model
+    outs:
+      - models/fight_gru.pt
+      - models/fight_gru.json:
+          cache: false
+    metrics:
+      - reports/fight_metrics.json:
+          cache: false
+    plots:
+      - reports/fight_training.png
+      - reports/fight_roc.png
+      - reports/fight_confusion.png
