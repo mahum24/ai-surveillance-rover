@@ -1,0 +1,50 @@
+# Surveillance detector settings. Edit and re-run; no code changes needed.
+
+camera:
+  source: 0            # 0 = built-in webcam, or a path to a video / image / folder of images
+  width: 1280
+  height: 720
+  mirror: true         # flip webcam horizontally (feels natural when facing the camera)
+
+models:
+  pose: models/yolo11n-pose.pt      # people + 17 body keypoints (pretrained on COCO)
+  objects: models/yolo11n.pt        # bags, laptops, phones... for theft detection
+  tracker: bytetrack.yaml
+  imgsz: 480                        # lower = faster, higher = better for small/far people
+  conf: 0.4
+  object_conf: 0.35
+  object_every_n_frames: 3          # object model is slower, run it less often
+
+zones:
+  file: zones.json                  # created when you draw zones in the app (Z / L keys)
+  anchor: center                    # "center" (body centre, good for webcam) or "feet" (good for CCTV/rover)
+
+loitering:
+  enabled: true
+  seconds: 20                       # time in view (or inside a loiter zone, if you drew one)
+
+access:
+  enabled: true
+
+fight:
+  enabled: true
+  window_seconds: 0.6               # motion is averaged over this window
+  motion_threshold: 5.0             # arm speed in body-widths/second; press D in the app to see live values
+  proximity: 3.5                    # people closer than this many body-widths count as "close"
+  window_frames: 12                 # temporal smoothing: look at the last N frames...
+  min_positive_frames: 5            # ...and alert if at least this many looked like fighting
+
+theft:
+  enabled: true
+  classes: [backpack, handbag, suitcase, laptop, cell phone, book, bottle]
+  guard_seconds: 3                  # an object still for this long becomes "guarded"
+  move_fraction: 1.0                # guarded object moved more than this x its own size = taken
+  vanish_seconds: 1.5               # guarded object disappeared for this long right after a hand touched it = taken
+  hand_memory_seconds: 1.5          # how recently a hand must have touched it
+
+alerts:
+  dir: alerts                       # snapshots, clips and alerts.jsonl go here
+  cooldown_seconds: 10              # don't repeat the same alert more often than this
+  clip_seconds: 4                   # seconds of footage before the alert saved as a clip
+  sound: true
+  backend_url: null                 # e.g. http://localhost:8000/alerts to POST alerts to your FastAPI backend

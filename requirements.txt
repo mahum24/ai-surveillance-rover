@@ -1,0 +1,9 @@
+# Intel Mac: torch 2.2.2 is the last release with macOS x86_64 wheels
+torch==2.2.2
+torchvision==0.17.2
+numpy<2
+ultralytics==8.4.189
+opencv-python<4.11
+lap>=0.5.12
+pyyaml
+requests

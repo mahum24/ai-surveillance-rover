@@ -1,0 +1,18 @@
+# environment
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# downloaded / generated (not redistributed)
+data/
+models/*.pt
+tests/videos/*
+!tests/videos/.gitkeep
+alerts/
+outputs/
+zones.json
+*.mp4
+
+# personal documents
+*.pdf
